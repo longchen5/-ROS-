@@ -50,6 +50,6 @@ roslaunch ball_tracker tracker_system.launchkin_make
   sudo chmod 666 /dev/ttyUSB0
 - 虚拟机中务必设置 USB 摄像头透传
 - HSV 颜色范围可在 ball_tracker.py 中调整
-- 调整舵机控制代码为control。zip
+- 舵机控制代码为control.zip
 
 
