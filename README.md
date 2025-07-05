@@ -28,10 +28,16 @@ pip install opencv-python numpy pyserial
    ls /dev/ttyUSB0
 
 2. 启动系统：
-   cd ~/catkin_ws
-   catkin_make
-   source devel/setup.bash
-   roslaunch ball_tracker tracker_system.launch
+
+ctrl+alt+t
+第一个终端，
+roslaunch usb_cam usb_cam-test.launch
+ctrl+shift+e
+第二个终端
+cd ~/catkin_ws
+source devel/setup.bash
+roslaunch ball_tracker tracker_system.launchkin_make
+
 
 串口发送格式
 ------------
@@ -44,3 +50,6 @@ pip install opencv-python numpy pyserial
   sudo chmod 666 /dev/ttyUSB0
 - 虚拟机中务必设置 USB 摄像头透传
 - HSV 颜色范围可在 ball_tracker.py 中调整
+-舵机控制代码为control。zip
+
+
