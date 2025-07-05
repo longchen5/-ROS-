@@ -4,6 +4,7 @@ Ball Tracker ROS System (ball_tracker)
 简介
 ----
 该 ROS 系统使用摄像头检测橙色乒乓球的位置，并通过串口向下位机发送坐标和距离信息。
+usb_cam和control.zip来自开源项目,如有侵权立即删除。
 本系统由 3 个部分组成：
 1. USB 摄像头节点（usb_cam）
 2. 图像识别节点（ball_tracker.py）
