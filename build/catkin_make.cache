@@ -1,0 +1,2 @@
+ball_tracker:usb_cam
+-DCATKIN_DEVEL_PREFIX=/home/deaf/catkin_ws/devel -DCMAKE_INSTALL_PREFIX=/home/deaf/catkin_ws/install -G Unix Makefiles

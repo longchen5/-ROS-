@@ -1,0 +1,201 @@
+#!/usr/bin/env python
+import rospy
+import cv2
+import numpy as np
+import serial
+import time
+import math
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge, CvBridgeError
+from std_msgs.msg import Float32MultiArray
+
+class BallTracker:
+    def __init__(self):
+        rospy.init_node('ball_tracker')
+
+        self.camera_topic = rospy.get_param('~camera_topic', '/usb_cam/image_raw')
+        self.serial_port = rospy.get_param('~serial_port', '/dev/ttyUSB0')
+        self.baud_rate = rospy.get_param('~baud_rate', 115200)
+        self.send_interval = rospy.get_param('~send_interval', 0.02)
+        self.min_radius = rospy.get_param('~min_radius', 5)
+        self.show_gui = rospy.get_param('~show_gui', True)
+
+        self.lower_orange = np.array([11, 124, 175])
+        self.upper_orange = np.array([25, 255, 255])
+
+        self.DEAD_ZONE_X = 2
+        self.DEAD_ZONE_Y = 2
+        self.DEAD_ZONE_DIST = 0
+        self.SMOOTHING_FACTOR = 0.9
+        self.CENTER_SMOOTH_THRESHOLD = 3 # 降低圆心微小跳变
+        self.actual_diameter = 40
+        self.focal_length = 658.05
+
+        self.prev_x, self.prev_y, self.prev_radius = 0, 0, 0
+        self.prev_distance_cm = 0
+        self.last_sent_x, self.last_sent_y, self.last_sent_dist = 0, 0, 0
+        self.last_send_time = 0
+
+        self.bridge = CvBridge()
+
+        try:
+            self.ser = serial.Serial(self.serial_port, self.baud_rate, timeout=1)
+            rospy.loginfo(f"串口连接成功: {self.serial_port} @ {self.baud_rate} baud")
+        except serial.SerialException as e:
+            rospy.logerr(f"串口连接失败: {e}")
+            self.ser = None
+
+        self.image_pub = rospy.Publisher('/ball_tracker/processed_image', Image, queue_size=1)
+        self.ball_pub = rospy.Publisher('/ball_tracker/position', Float32MultiArray, queue_size=1)
+        self.debug_pub = rospy.Publisher('/ball_tracker/debug_mask', Image, queue_size=1)
+
+        self.image_sub = rospy.Subscriber(self.camera_topic, Image, self.image_callback, queue_size=1, buff_size=2 ** 24)
+
+        if self.show_gui:
+            cv2.namedWindow('Ball Tracker', cv2.WINDOW_NORMAL)
+            cv2.resizeWindow('Ball Tracker', 1200, 600)
+            cv2.namedWindow('Mask', cv2.WINDOW_NORMAL)
+            cv2.createTrackbar('H min', 'Mask', self.lower_orange[0], 179, lambda x: self.update_hsv())
+            cv2.createTrackbar('S min', 'Mask', self.lower_orange[1], 255, lambda x: self.update_hsv())
+            cv2.createTrackbar('V min', 'Mask', self.lower_orange[2], 255, lambda x: self.update_hsv())
+            cv2.createTrackbar('H max', 'Mask', self.upper_orange[0], 179, lambda x: self.update_hsv())
+            cv2.createTrackbar('S max', 'Mask', self.upper_orange[1], 255, lambda x: self.update_hsv())
+            cv2.createTrackbar('V max', 'Mask', self.upper_orange[2], 255, lambda x: self.update_hsv())
+
+        rospy.loginfo("乒乓球追踪节点已启动")
+        rospy.on_shutdown(self.shutdown)
+
+    def update_hsv(self):
+        self.lower_orange[0] = cv2.getTrackbarPos('H min', 'Mask')
+        self.lower_orange[1] = cv2.getTrackbarPos('S min', 'Mask')
+        self.lower_orange[2] = cv2.getTrackbarPos('V min', 'Mask')
+        self.upper_orange[0] = cv2.getTrackbarPos('H max', 'Mask')
+        self.upper_orange[1] = cv2.getTrackbarPos('S max', 'Mask')
+        self.upper_orange[2] = cv2.getTrackbarPos('V max', 'Mask')
+
+    def image_callback(self, msg):
+        try:
+            frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+        except CvBridgeError as e:
+            rospy.logerr(f"图像转换错误: {e}")
+            return
+
+        x, y, radius, dist_cm, mask = self.detect_ball(frame)
+
+        current_time = time.time()
+        if current_time - self.last_send_time >= self.send_interval:
+            if radius > self.min_radius:
+                self.send_if_needed(x, y, dist_cm)
+            else:
+                self.send_if_needed(0, 0, 0)
+            self.last_send_time = current_time
+
+        if self.show_gui:
+            self.visualize(frame, x, y, radius, dist_cm, mask)
+
+        try:
+            self.image_pub.publish(self.bridge.cv2_to_imgmsg(frame, "bgr8"))
+            self.debug_pub.publish(self.bridge.cv2_to_imgmsg(mask, "mono8"))
+        except CvBridgeError:
+            pass
+
+    def detect_ball(self, frame):
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, self.lower_orange, self.upper_orange)
+        mask = cv2.erode(mask, np.ones((5, 5), np.uint8), iterations=1)
+        mask = cv2.dilate(mask, np.ones((5, 5), np.uint8), iterations=2)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours:
+            max_contour = max(contours, key=cv2.contourArea)
+            x, y, radius = self.fit_circle(max_contour)
+            if radius and radius > self.min_radius:
+                dx = x - self.prev_x
+                dy = y - self.prev_y
+                if abs(dx) < self.CENTER_SMOOTH_THRESHOLD:
+                    x = self.prev_x
+                if abs(dy) < self.CENTER_SMOOTH_THRESHOLD:
+                    y = self.prev_y
+
+                x = self.SMOOTHING_FACTOR * x + (1 - self.SMOOTHING_FACTOR) * self.prev_x
+                y = self.SMOOTHING_FACTOR * y + (1 - self.SMOOTHING_FACTOR) * self.prev_y
+                radius = self.SMOOTHING_FACTOR * radius + (1 - self.SMOOTHING_FACTOR) * self.prev_radius
+
+                self.prev_x, self.prev_y, self.prev_radius = x, y, radius
+
+                dist_cm = (self.actual_diameter * self.focal_length) / (2 * radius) / 10
+                self.prev_distance_cm = dist_cm
+
+                return x, y, radius, dist_cm, mask
+        return 0, 0, 0, 0, mask
+
+    def fit_circle(self, contour):
+        if len(contour) < 5:
+            return 0, 0, 0
+        try:
+            (x1, y1), radius1 = cv2.minEnclosingCircle(contour)
+            ellipse = cv2.fitEllipse(contour)
+            (x2, y2), (d1, d2), _ = ellipse
+            radius2 = (d1 + d2) / 4.0
+            M = cv2.moments(contour)
+            if M["m00"] != 0:
+                x3 = int(M["m10"] / M["m00"])
+                y3 = int(M["m01"] / M["m00"])
+                radius3 = np.mean([np.linalg.norm(point[0] - np.array([x3, y3])) for point in contour])
+            else:
+                x3, y3, radius3 = x1, y1, radius1
+
+            x = 0.4 * x1 + 0.4 * x2 + 0.2 * x3
+            y = 0.4 * y1 + 0.4 * y2 + 0.2 * y3
+            radius = 0.4 * radius1 + 0.4 * radius2 + 0.2 * radius3
+            return x, y, radius
+        except:
+            return 0, 0, 0
+
+    def send_if_needed(self, x, y, dist):
+        x, y, dist = int(x), int(y), int(dist)
+        if (abs(x - self.last_sent_x) > self.DEAD_ZONE_X or
+            abs(y - self.last_sent_y) > self.DEAD_ZONE_Y or
+            abs(dist - self.last_sent_dist) > self.DEAD_ZONE_DIST):
+            if self.ser and self.ser.is_open:
+                try:
+                    data = f"#{x}${y}*{dist}\r\n"
+                    self.ser.write(data.encode('utf-8'))
+                except Exception as e:
+                    rospy.logerr(f"串口发送错误: {e}")
+            self.last_sent_x = x
+            self.last_sent_y = y
+            self.last_sent_dist = dist
+
+        ball_data = Float32MultiArray()
+        ball_data.data = [x, y, dist]
+        self.ball_pub.publish(ball_data)
+
+    def visualize(self, frame, x, y, radius, dist, mask):
+        height, width = frame.shape[:2]
+        center_x, center_y = width // 2, height // 2
+        cv2.line(frame, (center_x, 0), (center_x, height), (255, 0, 0), 1)
+        cv2.line(frame, (0, center_y), (width, center_y), (255, 0, 0), 1)
+        if radius > self.min_radius:
+            cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 0), 2)
+            cv2.circle(frame, (int(x), int(y)), 2, (0, 0, 255), 3)
+            cv2.putText(frame, f"Distance: {dist:.1f}cm", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(frame, f"Radius: {radius:.1f}px", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
+        else:
+            cv2.putText(frame, "No valid ball detected", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.imshow('Ball Tracker', frame)
+        cv2.imshow('Mask', mask)
+        cv2.waitKey(1)
+
+    def shutdown(self):
+        if self.ser and self.ser.is_open:
+            self.ser.close()
+        if self.show_gui:
+            cv2.destroyAllWindows()
+
+    def run(self):
+        rospy.spin()
+
+if __name__ == '__main__':
+    tracker = BallTracker()
+    tracker.run()

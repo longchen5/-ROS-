@@ -1,0 +1,21 @@
+<launch>
+  <!-- Ball Tracker 节点 -->
+  <node name="ball_tracker" pkg="ball_tracker" type="ball_tracker.py" output="screen">
+    <param name="camera_topic" value="/usb_cam/image_raw" />
+    <param name="min_radius" value="5" />
+    <param name="actual_diameter" value="40" />        <!-- mm -->
+    <param name="focal_length" value="658.05" />        <!-- pixels -->
+    <param name="smoothing" value="0.9" />
+    <param name="center_smooth_threshold" value="3" />
+    <param name="show_gui" value="true" />
+  </node>
+
+  <!-- Serial Controller 串口发送节点 -->
+  <node name="serial_controller" pkg="ball_tracker" type="serial_controller.py" output="screen">
+    <param name="serial_port" value="/dev/ttyUSB0" />
+    <param name="baud_rate" value="115200" />
+    <param name="deadzone_x" value="2" />
+    <param name="deadzone_y" value="2" />
+    <param name="deadzone_dist" value="0" />
+  </node>
+</launch>
