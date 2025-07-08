@@ -30,16 +30,13 @@ pip install opencv-python numpy pyserial
 
 2. 启动系统：
 
-ctrl+alt+t
-第一个终端，
+- ctrl+alt+t第一个终端：
 roslaunch usb_cam usb_cam-test.launch
-ctrl+shift+e
-第二个终端
-cd ~/catkin_ws
 
-source devel/setup.bash
-
-roslaunch ball_tracker tracker_system.launch
+- ctrl+shift+e第二个终端：
+- cd ~/catkin_ws
+- source devel/setup.bash
+- roslaunch ball_tracker tracker_system.launch
 
 
 串口发送格式
