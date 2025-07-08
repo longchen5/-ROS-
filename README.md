@@ -25,18 +25,19 @@ pip install opencv-python numpy pyserial
 使用方法
 --------
 1. 插入摄像头与串口模块，确保系统识别：
+   
    ls /dev/video0
    
    ls /dev/ttyUSB0
 
-3. 启动系统：
+2. 启动系统：
 
 - ctrl+alt+t第一个终端：
-- 
+  
   roslaunch usb_cam usb_cam-test.launch
 
 - ctrl+shift+e第二个终端：
-- 
+  
   cd ~/catkin_ws
   
   source devel/setup.bash
