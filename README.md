@@ -36,7 +36,9 @@ roslaunch usb_cam usb_cam-test.launch
 ctrl+shift+e
 第二个终端
 cd ~/catkin_ws
+
 source devel/setup.bash
+
 roslaunch ball_tracker tracker_system.launch
 
 
