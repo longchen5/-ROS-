@@ -37,7 +37,7 @@ ctrl+shift+e
 第二个终端
 cd ~/catkin_ws
 source devel/setup.bash
-roslaunch ball_tracker tracker_system.launchkin_make
+roslaunch ball_tracker tracker_system.launch
 
 
 串口发送格式
